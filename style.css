@@ -172,6 +172,38 @@ table.data td.num, table.data th.num { text-align: right; font-variant-numeric: 
   padding: 10px 18px; border-radius: 999px; font-size: 15px; z-index: 20; max-width: 90vw;
 }
 
+/* Ver.0.3: 回答後の表示（文字ラベル付き） */
+.choice { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.choice.is-correct { border-width: 2px; }
+.choice.is-wrong { border-width: 2px; }
+.choice.is-dim { opacity: 0.35; }
+.choice-badge { font-size: 16px; font-weight: 700; padding: 2px 10px; border-radius: 999px; }
+.choice-badge.ok { background: var(--ok); color: #03231a; }
+.choice-badge.ng { background: var(--ng); color: #2a0610; }
+
+/* Ver.0.3: 成長・振り返り・実績 */
+.rank-name { font-size: 24px; font-weight: 700; color: var(--cyan); margin: 2px 0 6px; }
+.growth-line { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+.growth-note { font-size: 16px; color: var(--muted); margin-top: 8px; }
+.bar { height: 12px; border-radius: 999px; background: rgba(34, 211, 238, 0.12); overflow: hidden; }
+.bar-fill { height: 100%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); border-radius: 999px; }
+.week-dots { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; text-align: center; margin-bottom: 10px; }
+.wd-label { font-size: 16px; color: var(--muted); }
+.wd-dot { height: 34px; line-height: 34px; border-radius: 10px; background: rgba(7, 16, 31, 0.6); color: var(--ok); font-weight: 700; }
+.wd-dot.on { background: rgba(52, 211, 153, 0.18); border: 1px solid var(--ok); }
+.wd-dot.today { outline: 2px solid var(--cyan); outline-offset: 1px; }
+.badge-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+.badge-item { padding: 10px; border-radius: 12px; border: 1px solid var(--line); background: rgba(7, 16, 31, 0.6); opacity: 0.55; }
+.badge-item.on { opacity: 1; border-color: var(--warn); background: rgba(251, 191, 36, 0.10); }
+.badge-name { font-size: 16px; font-weight: 700; }
+.badge-item.on .badge-name { color: var(--warn); }
+.badge-desc { font-size: 16px; color: var(--muted); line-height: 1.4; }
+.result-growth { display: flex; flex-direction: column; gap: 10px; }
+.unlock {
+  padding: 12px 14px; border-radius: 14px; font-weight: 700; font-size: 17px;
+  color: #2a1a00; background: var(--warn); box-shadow: 0 0 18px rgba(251, 191, 36, 0.45);
+}
+
 /* Ver.0.2.1: 文字16px以上・操作領域48px以上 */
 .link-small, .toggle { min-height: 48px; }
 .hud-label, .stat-label, .unit-tag, .kind-tag, .feedback-note,

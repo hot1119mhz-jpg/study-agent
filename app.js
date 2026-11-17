@@ -1,11 +1,28 @@
-/* STUDY AGENT Ver.0.2 — vanilla JS, no build step. */
+/* STUDY AGENT Ver.0.3 — vanilla JS, no build step. */
 (function () {
   'use strict';
 
   // ---------------------------------------------------------------------------
   // Constants
   // ---------------------------------------------------------------------------
-  var APP_VERSION = '0.2.2';
+  var APP_VERSION = '0.3.1';
+  var MASTER_BOX = 2;                   // 箱2以上＝日をあけて2回続けて正解＝「習得」
+  var EXTRA_NEW_PER_DAY = 5;            // 追加セットで先取りできる新規問題の数
+  var RANKS = [
+    [0, '訓練生'], [5, '見習いエージェント'], [10, 'エージェント'],
+    [20, '上級エージェント'], [30, 'エリートエージェント'], [40, 'マスターエージェント']
+  ];
+  var BADGES = [
+    { id: 'first', name: '初ミッション', desc: 'はじめてミッションを完了' },
+    { id: 'perfect', name: 'パーフェクト', desc: '5問以上のミッションで全問正解' },
+    { id: 'streak3', name: '3日連続', desc: '3日続けてミッション完了' },
+    { id: 'streak7', name: '7日連続', desc: '7日続けてミッション完了' },
+    { id: 'week5', name: '週5日', desc: '1週間で5日学習' },
+    { id: 'comeback', name: '苦手克服', desc: '一度間違えた問題を習得' },
+    { id: 'master10', name: '習得10問', desc: '10問を習得' },
+    { id: 'master20', name: '習得20問', desc: '20問を習得' },
+    { id: 'unit', name: '単元マスター', desc: '1つの単元をすべて習得' }
+  ];
   var SCHEMA = 1;
   var KEY_REAL = 'sa_data_v1';          // 本番の学習記録
   var KEY_TEST = 'sa_data_test_v1';     // テストモード用のコピー
@@ -51,7 +68,7 @@
   function safeRemove(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } }
 
   function emptyData() {
-    return { schema: SCHEMA, progress: {}, log: [], days: {}, settings: { allowUnverified: false } };
+    return { schema: SCHEMA, progress: {}, log: [], days: {}, settings: { allowUnverified: false }, badges: {} };
   }
 
   function isInt(n, min, max) { return typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max; }
@@ -67,11 +84,13 @@
     if (!d.progress || typeof d.progress !== 'object' || Array.isArray(d.progress)) errors.push('progress が不正です');
     else Object.keys(d.progress).forEach(function (id) {
       var p = d.progress[id];
-      if (!safeId(id) || !p || !isInt(p.box, 0, 4) || !isDay(p.due) || !isInt(p.correct, 0, 1e9) || !isInt(p.wrong, 0, 1e9)) {
+      if (!safeId(id) || !p || !isInt(p.box, 0, 4) || !isDay(p.due) || !isInt(p.correct, 0, 1e9) || !isInt(p.wrong, 0, 1e9) ||
+          (p.mastered !== undefined && p.mastered !== null && !isDay(p.mastered))) {   // 0.3.1 (M5)
         errors.push('progress[' + id + '] が不正です');
       } else {
         out.progress[id] = { box: p.box, due: p.due, correct: p.correct, wrong: p.wrong,
-          last: isDay(p.last) ? p.last : null, lastCorrect: p.lastCorrect === true };
+          last: isDay(p.last) ? p.last : null, lastCorrect: p.lastCorrect === true,
+          mastered: isDay(p.mastered) ? p.mastered : null };
       }
     });
 
@@ -95,6 +114,17 @@
     });
 
     if (d.settings && typeof d.settings === 'object') out.settings.allowUnverified = d.settings.allowUnverified === true;
+
+    // 0.3: 実績（任意。旧バージョンのデータにはキー自体が無いので、無いのは可）
+    // 0.3.1 (M5): あるのに形が不正・既知の実績の日付が不正 → エラー。未知の実績IDは読み飛ばす（将来版の実績を想定）
+    if (d.badges !== undefined) {
+      if (!d.badges || typeof d.badges !== 'object' || Array.isArray(d.badges)) errors.push('badges が不正です');
+      else Object.keys(d.badges).forEach(function (k) {
+        if (!badgeById(k)) return;
+        if (!isDay(d.badges[k])) errors.push('badges[' + k + '] の日付が不正です');
+        else out.badges[k] = d.badges[k];
+      });
+    }
 
     return errors.length ? { ok: false, errors: errors } : { ok: true, data: out };
   }
@@ -216,7 +246,10 @@
     function push(q, kind) { if (items.length < MAX_Q && !used[q.id]) { used[q.id] = true; items.push({ q: q, kind: kind }); } }
 
     dueList(day).forEach(function (q) { push(q, 'review'); });
-    var left = newLeftToday(day);
+    // 追加セットでは、通常の1日5問に加えてさらに5問まで新しい問題を先取りできる
+    var left = mode === 'extra'
+      ? Math.max(0, MAX_NEW_PER_DAY + EXTRA_NEW_PER_DAY - getDay(day).newCount)
+      : newLeftToday(day);
     unseenList().forEach(function (q) { if (left > 0 && items.length < MAX_Q) { push(q, 'new'); left--; } });
     if (mode === 'extra') {
       pool().filter(function (q) { return data.progress[q.id] && !used[q.id]; })
@@ -234,18 +267,27 @@
     var p = data.progress[q.id];
     var d = dayRec(day);
     if (!p) {
-      p = { box: 0, due: day, correct: 0, wrong: 0, last: null, lastCorrect: false };
+      p = { box: 0, due: day, correct: 0, wrong: 0, last: null, lastCorrect: false, mastered: null };
       d.newCount++;
     }
     if (correct) p.correct++; else p.wrong++;
     p.last = day;
     p.lastCorrect = correct;
 
+    var oldBox = p.box;
     if (item.kind !== 'practice') {
       if (!correct) p.box = 0;
       else if (ms < SLOW_MS) p.box = Math.min(4, p.box + 1);
       // 正解でも 20 秒以上なら箱は据え置き
       p.due = addDays(day, INTERVALS[p.box]);
+      // 0.3.1: 「箱2未満 → 箱2以上」に上がった瞬間だけを習得イベントとする（M1・H3）
+      if (oldBox < MASTER_BOX && p.box >= MASTER_BOX) {
+        if (!p.mastered) {
+          p.mastered = day;                                   // 初めての習得日（週の集計用）
+          if (mission) mission.newMastered = (mission.newMastered || 0) + 1;
+        }
+        if (p.wrong > 0 && mission) mission.comeback = true;  // 過去に間違えた問題を復習で習得した
+      }
     }
     data.progress[q.id] = p;
     d.answered++;
@@ -272,6 +314,63 @@
     }
     return false;
   }
+
+  // ---------------------------------------------------------------------------
+  // Growth (0.3): 習得・ランク・今週の振り返り・実績
+  // ---------------------------------------------------------------------------
+  function isMastered(q) { var p = data.progress[q.id]; return !!(p && p.box >= MASTER_BOX); }
+  function masteredCount() { return pool().filter(isMastered).length; }
+
+  function rankInfo(n) {
+    var cur = RANKS[0], next = null;
+    for (var i = 0; i < RANKS.length; i++) {
+      if (n >= RANKS[i][0]) { cur = RANKS[i]; next = RANKS[i + 1] || null; }
+    }
+    return { name: cur[1], min: cur[0], next: next ? { name: next[1], need: next[0] } : null };
+  }
+
+  function weekStart(day) {
+    var p = day.split('-').map(Number);
+    var dow = new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay();   // 0=日
+    return addDays(day, -((dow + 6) % 7));                            // 月曜はじまり
+  }
+  function weekStats(start, cap) {
+    var end = addDays(start, 6), n = 0, c = 0, days = {}, mastered = 0;
+    if (cap && cap < end) end = cap;   // 0.3.1: 今週分は「今日まで」に限る
+    data.log.forEach(function (r) {
+      if (r.day >= start && r.day <= end) { n++; if (r.correct) c++; days[r.day] = true; }
+    });
+    Object.keys(data.progress).forEach(function (id) {
+      var m = data.progress[id].mastered;
+      if (m && m >= start && m <= end) mastered++;
+    });
+    return { n: n, c: c, rate: n ? Math.round(c / n * 100) : null, days: days, dayCount: Object.keys(days).length, mastered: mastered };
+  }
+
+  /** 条件を満たした実績を解除し、今回新しく解除したものを返す */
+  function checkBadges(m) {
+    var t = today(), got = [];
+    function unlock(id) { if (!data.badges[id]) { data.badges[id] = t; got.push(id); } }
+    var mc = masteredCount();
+    if (Object.keys(data.days).some(function (d) { return data.days[d].missionDone; })) unlock('first');
+    // 0.3.1 (H2): 通常ミッションを最後まで終えた（10分終了を含む・中断は除く）ときだけ
+    if (m && m.completed && m.mode === 'normal' && m.results.length >= 5 &&
+        m.results.every(function (r) { return r.correct; })) unlock('perfect');
+    var s = streak();
+    if (s >= 3) unlock('streak3');
+    if (s >= 7) unlock('streak7');
+    if (weekStats(weekStart(t), t).dayCount >= 5) unlock('week5');
+    // 0.3.1 (H3): このミッション中に「過去に間違えた問題が復習で箱2以上に上がった」ときだけ
+    if (m && m.comeback) unlock('comeback');
+    if (mc >= 10) unlock('master10');
+    if (mc >= 20) unlock('master20');
+    var units = {};
+    pool().forEach(function (q) { (units[q.unit] = units[q.unit] || []).push(q); });
+    if (Object.keys(units).some(function (u) { return units[u].every(isMastered); })) unlock('unit');
+    if (got.length) save();
+    return got;
+  }
+  function badgeById(id) { for (var i = 0; i < BADGES.length; i++) if (BADGES[i].id === id) return BADGES[i]; return null; }
 
   // ---------------------------------------------------------------------------
   // Timing: performance.now() + visibilitychange で非表示時間を除外
@@ -338,6 +437,7 @@
     $('statDue').textContent = due;
     $('statNew').textContent = Math.min(newLeftToday(t), unseenList().length);
     $('statStreak').textContent = streak();
+    renderHomeGrowth();
 
     var main = $('homeMain');
     main.innerHTML = '';
@@ -356,6 +456,7 @@
       main.appendChild(el('p', 'status-msg', 'おつかれさま。続きはまた明日。'));
       var extra = buildMission('extra');
       if (extra.length) {
+        main.appendChild(el('p', 'status-msg', '今日はここまでで十分。追加は余裕のあるときだけ。'));
         var b2 = el('button', 'btn', '追加セット（任意・' + extra.length + '問）');
         b2.type = 'button';
         b2.addEventListener('click', function () { startMission('extra'); });
@@ -376,6 +477,88 @@
     main.appendChild(el('p', 'status-msg', '目安は10分。時間になったら、その問題で終わります。'));
   }
 
+  function bar(pct) {
+    var track = el('div', 'bar');
+    var fill = el('div', 'bar-fill');
+    fill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+    track.appendChild(fill);
+    return track;
+  }
+
+  function renderHomeGrowth() {
+    var total = pool().length;
+    var mc = masteredCount();
+    var rk = rankInfo(mc);
+
+    // ランクと習得バー
+    var r = $('homeRank');
+    r.innerHTML = '';
+    r.hidden = total === 0;
+    r.appendChild(el('div', 'hud-label', 'RANK'));
+    r.appendChild(el('div', 'rank-name', rk.name));
+    r.appendChild(el('div', 'growth-line', '習得 ' + mc + ' / ' + total + ' 問'));
+    r.appendChild(bar(total ? mc / total * 100 : 0));
+    r.appendChild(el('div', 'growth-note', rk.next
+      ? '次のランク「' + rk.next.name + '」まで あと' + (rk.next.need - mc) + '問'
+      : '最高ランク到達！'));
+    r.appendChild(el('div', 'growth-note', '※「習得」は覚え具合の目安。日をあけた復習で、20秒以内の正解を重ねた問題の数です'));
+
+    // 今週の振り返り
+    var t = today(), ws = weekStart(t);
+    var cur = weekStats(ws, t), prev = weekStats(addDays(ws, -7));
+    var w = $('homeWeek');
+    w.innerHTML = '';
+    w.hidden = total === 0;
+    w.appendChild(el('div', 'hud-label', 'THIS WEEK'));
+    w.appendChild(el('div', 'section-title', '今週の振り返り'));
+    var dots = el('div', 'week-dots');
+    for (var i = 0; i < 7; i++) {
+      var d = addDays(ws, i);
+      var cell = el('div', 'wd-cell');
+      cell.appendChild(el('div', 'wd-label', '月火水木金土日'[i]));
+      cell.appendChild(el('div', 'wd-dot' + (cur.days[d] ? ' on' : '') + (d === t ? ' today' : ''), cur.days[d] ? '✓' : ''));
+      dots.appendChild(cell);
+    }
+    w.appendChild(dots);
+    var grid = el('div', 'stats');
+    function stat(num, label) {
+      var s = el('div', 'stat');
+      s.appendChild(el('div', 'stat-num', num));
+      s.appendChild(el('div', 'stat-label', label));
+      grid.appendChild(s);
+    }
+    stat(String(cur.n), '回答数');
+    stat(cur.rate === null ? '－' : cur.rate + '%', '正答率');
+    stat('+' + cur.mastered, '新しく習得');
+    w.appendChild(grid);
+    // 0.3.1 (M3): データから言えない評価・原因は書かない
+    var cmp;
+    if (cur.rate === null) cmp = '今週はまだこれから。今日の5問から始めよう。';
+    else if (prev.rate === null) cmp = '今週は ' + cur.dayCount + '日取り組んだね。来週はこの記録と比べられるよ。';
+    else if (cur.rate > prev.rate) cmp = '今週は' + cur.rate + '％、先週は' + prev.rate + '％。今週も取り組めたね。';
+    else if (cur.rate === prev.rate) cmp = '正答率は先週と同じ' + cur.rate + '％。解説も確認しておこう。';
+    else cmp = '今週は' + cur.rate + '％。問題の内容や数が違うので、先週との差は目安だよ。';
+    w.appendChild(el('div', 'growth-note', cmp));
+    if (cur.rate !== null) w.appendChild(el('div', 'growth-note', '今週は途中の記録です。正答率は出た問題によって変わります。'));
+
+    // 実績
+    var b = $('homeBadges');
+    b.innerHTML = '';
+    b.hidden = total === 0;
+    var have = BADGES.filter(function (x) { return data.badges[x.id]; }).length;
+    b.appendChild(el('div', 'hud-label', 'ACHIEVEMENTS'));
+    b.appendChild(el('div', 'section-title', '実績 ' + have + ' / ' + BADGES.length));
+    var g = el('div', 'badge-grid');
+    BADGES.forEach(function (x) {
+      var on = !!data.badges[x.id];
+      var it = el('div', 'badge-item' + (on ? ' on' : ''));
+      it.appendChild(el('div', 'badge-name', (on ? '★ ' : '☆ ') + x.name));
+      it.appendChild(el('div', 'badge-desc', x.desc));
+      g.appendChild(it);
+    });
+    b.appendChild(g);
+  }
+
   // ---------------------------------------------------------------------------
   // Quiz
   // ---------------------------------------------------------------------------
@@ -384,7 +567,8 @@
   function startMission(mode) {
     var items = buildMission(mode);
     if (!items.length) { toast('出題できる問題がありません'); renderHome(); return; }
-    mission = { mode: mode, items: items, idx: 0, results: [], startAt: performance.now(), hidden: 0, day: today(), timeUp: false };
+    mission = { mode: mode, items: items, idx: 0, results: [], startAt: performance.now(), hidden: 0, day: today(), timeUp: false,
+      newMastered: 0, comeback: false, rankBeforeMin: rankInfo(masteredCount()).min };
     showScreen('quiz');
     renderQuestion();
   }
@@ -403,9 +587,17 @@
 
     var box = $('choices');
     box.innerHTML = '';
-    q.choices.forEach(function (c, i) {
-      var b = el('button', 'choice', c);
+    // 0.3: 答えの位置を覚えないよう、表示順を毎回シャッフル（記録は元の番号）
+    var order = [0, 1, 2, 3];
+    for (var k = order.length - 1; k > 0; k--) {
+      var j = Math.floor(Math.random() * (k + 1));
+      var tmp = order[k]; order[k] = order[j]; order[j] = tmp;
+    }
+    order.forEach(function (i) {
+      var b = el('button', 'choice');
       b.type = 'button';
+      b.origIndex = i;
+      b.appendChild(el('span', 'choice-text', q.choices[i]));
       b.addEventListener('click', function () { answer(i); });
       box.appendChild(b);
     });
@@ -424,10 +616,18 @@
 
     var buttons = $('choices').children;
     for (var i = 0; i < buttons.length; i++) {
-      buttons[i].disabled = true;
-      if (i === q.answer) buttons[i].classList.add('is-correct');
-      else if (i === chosen) buttons[i].classList.add('is-wrong');
-      else buttons[i].classList.add('is-dim');
+      var btn = buttons[i], o = btn.origIndex;
+      btn.disabled = true;
+      // 0.3: 色だけでなく文字でも「正解」「あなたの答え」を示す
+      if (o === q.answer) {
+        btn.classList.add('is-correct');
+        btn.appendChild(el('span', 'choice-badge ok', correct ? '✓ 正解（あなたの答え）' : '✓ 正解'));
+      } else if (o === chosen) {
+        btn.classList.add('is-wrong');
+        btn.appendChild(el('span', 'choice-badge ng', '✗ あなたの答え'));
+      } else {
+        btn.classList.add('is-dim');
+      }
     }
     var fr = $('feedbackResult');
     fr.textContent = correct ? '正解！' : '不正解';
@@ -475,7 +675,9 @@
     var m = mission;
     var rec = dayRec(m.day);
     if (m.mode === 'normal' && !interrupted) rec.missionDone = true;
+    m.completed = !interrupted;   // 10分終了は完了扱い、中断は未完了
     save();
+    m.newBadges = checkBadges(m);
     mission = null;
     qTimer.answered = true;
     renderResult(m);
@@ -498,6 +700,27 @@
     var comment = commentFor(c, n);
     if (m.timeUp) comment = '10分たったので今日はここまで。' + comment;
     $('resultComment').textContent = comment;
+
+    // 0.3: 成長と実績
+    var gbox = $('resultGrowth');
+    gbox.innerHTML = '';
+    var mc = masteredCount(), total = pool().length, rk = rankInfo(mc);
+    if (rk.min > m.rankBeforeMin) {   // 0.3.1 (H1): 上がったときだけ通知（下がったときは出さない）
+      gbox.appendChild(el('div', 'unlock', 'ランクアップ！ 「' + rk.name + '」になった'));
+    }
+    (m.newBadges || []).forEach(function (id) {
+      var bd = badgeById(id);
+      if (bd) gbox.appendChild(el('div', 'unlock', '実績解除！ ★ ' + bd.name + '（' + bd.desc + '）'));
+    });
+    var gp = el('div', 'panel');
+    gp.appendChild(el('div', 'hud-label', 'GROWTH'));
+    gp.appendChild(el('div', 'rank-name', rk.name));
+    gp.appendChild(el('div', 'growth-line', '習得 ' + mc + ' / ' + total + ' 問' + (m.newMastered ? '（今回 +' + m.newMastered + '）' : '')));
+    gp.appendChild(bar(total ? mc / total * 100 : 0));
+    gp.appendChild(el('div', 'growth-note', rk.next
+      ? '次のランク「' + rk.next.name + '」まで あと' + (rk.next.need - mc) + '問'
+      : '最高ランク到達！'));
+    gbox.appendChild(gp);
 
     var list = $('wrongList');
     list.innerHTML = '';
@@ -727,6 +950,7 @@
     get data() { return data; }, get mission() { return mission; }, get questions() { return QUESTIONS; },
     buildMission: buildMission, recordAnswer: recordAnswer, today: today, addDays: addDays,
     validateData: validateData, importBackupText: importBackupText, buildCsv: buildCsv,
+    rankInfo: rankInfo, masteredCount: masteredCount, weekStart: weekStart, weekStats: weekStats,
     _setMissionStart: function (msAgo) { if (mission) mission.startAt = performance.now() - msAgo; },
     _setQuestionStart: function (msAgo) { qTimer.start = performance.now() - msAgo; },
     _onHide: onHide, _onShow: onShow
