@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07101f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="STUDY AGENT">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+  <title>STUDY AGENT</title>
+</head>
+<body>
+  <div id="testBanner" class="test-banner" hidden></div>
+  <div id="notice" class="notice" hidden></div>
+
+  <main id="app">
+    <!-- HOME -->
+    <section id="screen-home" class="screen">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark" aria-hidden="true"></span>STUDY AGENT</div>
+        <button id="btnParent" class="link-small" type="button">保護者</button>
+      </header>
+
+      <div class="panel hud">
+        <div class="hud-label">AGENT STATUS</div>
+        <div id="homeDate" class="hud-date"></div>
+        <div class="stats">
+          <div class="stat"><div id="statDue" class="stat-num">0</div><div class="stat-label">復習予定</div></div>
+          <div class="stat"><div id="statNew" class="stat-num">0</div><div class="stat-label">新しい問題</div></div>
+          <div class="stat"><div id="statStreak" class="stat-num">0</div><div class="stat-label">連続日数</div></div>
+        </div>
+      </div>
+
+      <div id="homeMain" class="home-main"></div>
+    </section>
+
+    <!-- QUIZ -->
+    <section id="screen-quiz" class="screen" hidden>
+      <header class="topbar">
+        <div id="quizProgress" class="quiz-progress">MISSION 1 / 10</div>
+        <button id="btnQuit" class="link-small" type="button">中断</button>
+      </header>
+      <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+
+      <div class="panel question-panel">
+        <div id="quizUnit" class="unit-tag"></div>
+        <div id="quizKind" class="kind-tag"></div>
+        <p id="quizQuestion" class="question-text"></p>
+      </div>
+
+      <div id="choices" class="choices"></div>
+
+      <div id="feedback" class="panel feedback" hidden>
+        <div id="feedbackResult" class="feedback-result"></div>
+        <div id="feedbackAnswer" class="feedback-answer"></div>
+        <p id="feedbackExplanation" class="feedback-explanation"></p>
+        <div id="feedbackTime" class="feedback-note" hidden></div>
+      </div>
+
+      <button id="btnNext" class="btn btn-primary" type="button" hidden>次の問題へ</button>
+    </section>
+
+    <!-- RESULT -->
+    <section id="screen-result" class="screen" hidden>
+      <header class="topbar"><div class="brand">MISSION REPORT</div></header>
+      <div class="panel result-panel">
+        <div class="hud-label">SCORE</div>
+        <div id="resultScore" class="result-score"></div>
+        <p id="resultComment" class="result-comment"></p>
+      </div>
+      <h2 id="wrongTitle" class="section-title">間違えた問題</h2>
+      <div id="wrongList" class="wrong-list"></div>
+      <button id="btnHome" class="btn btn-primary" type="button">ホームへ戻る</button>
+    </section>
+
+    <!-- PARENT -->
+    <section id="screen-parent" class="screen" hidden>
+      <header class="topbar">
+        <div class="brand">保護者画面</div>
+        <button id="btnParentBack" class="link-small" type="button">戻る</button>
+      </header>
+
+      <div class="panel">
+        <h2 class="section-title">問題データ</h2>
+        <div id="pQuestions"></div>
+        <ul id="pQuestionWarnings" class="warn-list"></ul>
+      </div>
+
+      <div class="panel">
+        <h2 class="section-title">直近7日の学習</h2>
+        <div id="pWeek" class="week"></div>
+      </div>
+
+      <div class="panel">
+        <h2 class="section-title">単元別の成績</h2>
+        <div id="pUnits"></div>
+      </div>
+
+      <div class="panel">
+        <h2 class="section-title">苦手な問題 上位10件</h2>
+        <div id="pWeak"></div>
+      </div>
+
+      <div class="panel">
+        <h2 class="section-title">データ</h2>
+        <div class="btn-col">
+          <button id="btnCsv" class="btn" type="button">学習履歴をCSVで書き出す</button>
+          <button id="btnBackup" class="btn" type="button">JSONバックアップを書き出す</button>
+          <button id="btnRestore" class="btn" type="button">JSONバックアップを読み込む</button>
+          <input id="fileRestore" type="file" accept="application/json,.json" hidden>
+        </div>
+        <p id="pDataNote" class="small-note"></p>
+      </div>
+
+      <div class="panel">
+        <h2 class="section-title">設定</h2>
+        <label class="toggle">
+          <input id="chkUnverified" type="checkbox">
+          <span>未確認の問題（verified: false）も出題する［デモ用］</span>
+        </label>
+      </div>
+
+      <div class="panel">
+        <h2 class="section-title">日付変更テスト</h2>
+        <p class="small-note">テストモード中は本番の記録のコピーを使います。テストを終了するとコピーは破棄され、本番の記録は変わりません。</p>
+        <div id="pTestOff">
+          <button id="btnTestOn" class="btn" type="button">テストモードを開始</button>
+        </div>
+        <div id="pTestOn" hidden>
+          <label class="field">テスト用の日付
+            <input id="inpTestDate" type="date">
+          </label>
+          <div class="btn-row">
+            <button id="btnTestPlus1" class="btn" type="button">＋1日</button>
+            <button id="btnTestOff" class="btn btn-danger" type="button">テスト終了</button>
+          </div>
+        </div>
+      </div>
+
+      <p id="pVersion" class="small-note center"></p>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
