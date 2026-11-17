@@ -5,8 +5,9 @@
   // ---------------------------------------------------------------------------
   // Constants
   // ---------------------------------------------------------------------------
-  var APP_VERSION = '0.3.2';
+  var APP_VERSION = '0.4.1';
   var MASTER_BOX = 2;                   // 箱2以上＝日をあけて2回続けて正解＝「習得」
+  var MAX_RECHECK = 2;                  // 0.4: 同日再確認は1ミッション最大2問（空き枠があるときだけ）
   var EXTRA_NEW_PER_DAY = 5;            // 追加セットで先取りできる新規問題の数
   var RANKS = [
     [0, '訓練生'], [5, '見習いエージェント'], [10, 'エージェント'],
@@ -68,7 +69,7 @@
   function safeRemove(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } }
 
   function emptyData() {
-    return { schema: SCHEMA, progress: {}, log: [], days: {}, settings: { allowUnverified: false }, badges: {} };
+    return { schema: SCHEMA, progress: {}, log: [], days: {}, settings: { allowUnverified: false }, badges: {}, best: 0 };
   }
 
   function isInt(n, min, max) { return typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max; }
@@ -114,6 +115,12 @@
     });
 
     if (d.settings && typeof d.settings === 'object') out.settings.allowUnverified = d.settings.allowUnverified === true;
+
+    // 0.4: これまでの最大習得数（ランクを下げないため。旧データには無いので任意）
+    if (d.best !== undefined) {
+      if (!isInt(d.best, 0, 1e6)) errors.push('best が不正です');
+      else out.best = d.best;
+    }
 
     // 0.3: 実績（任意。旧バージョンのデータにはキー自体が無いので、無いのは可）
     // 0.3.1 (M5): あるのに形が不正・既知の実績の日付が不正 → エラー。未知の実績IDは読み飛ばす（将来版の実績を想定）
@@ -194,6 +201,10 @@
     if (!isInt(q.answer, 0, 3)) return 'answer は 0〜3 の整数が必要です';
     if (typeof q.explanation !== 'string') return 'explanation がありません';
     if (typeof q.verified !== 'boolean') return 'verified は true/false が必要です';
+    // 0.4: 任意項目
+    if (q.point !== undefined && (typeof q.point !== 'string' || !q.point)) return 'point は文字列が必要です';
+    if (q.form !== undefined && typeof q.form !== 'string') return 'form は文字列が必要です';
+    if (q.ja !== undefined && typeof q.ja !== 'string') return 'ja は文字列が必要です';
     return null;
   }
 
@@ -264,6 +275,13 @@
     var q = item.q;
     var day = mission ? mission.day : today();
     var correct = chosen === q.answer;
+    // 0.4: 同日再確認は「確認」として記録だけ残す。箱・次回日・習得・新規枠・回答数には一切影響させない
+    if (item.kind === 'recheck') {
+      data.log.push({ ts: new Date().toISOString(), day: day, id: q.id, unit: q.unit, correct: correct,
+        ms: Math.round(ms), chosen: chosen, mode: 'recheck' });
+      save();
+      return correct;
+    }
     var p = data.progress[q.id];
     var d = dayRec(day);
     if (!p) {
@@ -290,6 +308,7 @@
       }
     }
     data.progress[q.id] = p;
+    updateBest();
     d.answered++;
     data.log.push({ ts: new Date().toISOString(), day: day, id: q.id, unit: q.unit, correct: correct,
       ms: Math.round(ms), chosen: chosen, mode: item.kind === 'practice' ? 'practice' : mode === 'extra' ? 'extra' : item.kind });
@@ -320,6 +339,10 @@
   // ---------------------------------------------------------------------------
   function isMastered(q) { var p = data.progress[q.id]; return !!(p && p.box >= MASTER_BOX); }
   function masteredCount() { return pool().filter(isMastered).length; }
+  /** 0.4: ランクは「これまでの最大習得数」で決める（下がらない）。習得数そのものは今の値を表示する */
+  function rankCount() { return Math.max(data.best || 0, masteredCount()); }
+  /** best を現在の習得数以上にそろえる。変わったら true */
+  function updateBest() { var mc = masteredCount(); if (mc > (data.best || 0)) { data.best = mc; return true; } return false; }
 
   function rankInfo(n) {
     var cur = RANKS[0], next = null;
@@ -338,6 +361,7 @@
     var end = addDays(start, 6), n = 0, c = 0, days = {}, mastered = 0;
     if (cap && cap < end) end = cap;   // 0.3.1: 今週分は「今日まで」に限る
     data.log.forEach(function (r) {
+      if (r.mode === 'recheck') return;   // 0.4: 同日確認は週の集計に入れない
       if (r.day >= start && r.day <= end) { n++; if (r.correct) c++; days[r.day] = true; }
     });
     Object.keys(data.progress).forEach(function (id) {
@@ -431,6 +455,8 @@
   // ---------------------------------------------------------------------------
   function renderHome() {
     renderTestBanner();
+    // 0.4.1 (M1): 旧データ（best なし）や復元直後でも、最初の回答より前に今の習得数を best へ退避する
+    if (QUESTIONS.length && updateBest()) save();
     var t = today();
     $('homeDate').textContent = dayLabel(t);
     var due = dueList(t).length;
@@ -488,7 +514,7 @@
   function renderHomeGrowth() {
     var total = pool().length;
     var mc = masteredCount();
-    var rk = rankInfo(mc);
+    var rk = rankInfo(rankCount());   // 0.4: ランクは下がらない
 
     // ランクと習得バー
     var r = $('homeRank');
@@ -499,7 +525,7 @@
     r.appendChild(el('div', 'growth-line', '習得 ' + mc + ' / ' + total + ' 問'));
     r.appendChild(bar(total ? mc / total * 100 : 0));
     r.appendChild(el('div', 'growth-note', rk.next
-      ? '次のランク「' + rk.next.name + '」まで あと' + (rk.next.need - mc) + '問'
+      ? '次のランク「' + rk.next.name + '」まで、今の習得数から あと' + Math.max(0, rk.next.need - mc) + '問'
       : '最高ランク到達！'));
     r.appendChild(el('div', 'growth-note', '※「習得」は覚え具合の目安。日をあけた復習で、20秒以内の正解を重ねた問題の数です'));
 
@@ -562,13 +588,14 @@
   // ---------------------------------------------------------------------------
   // Quiz
   // ---------------------------------------------------------------------------
-  var KIND_LABEL = { review: '復習', 'new': '新しい問題', practice: '練習' };
+  var KIND_LABEL = { review: '復習', 'new': '新しい問題', practice: '練習', recheck: 'もう一度確認' };
 
   function startMission(mode) {
     var items = buildMission(mode);
     if (!items.length) { toast('出題できる問題がありません'); renderHome(); return; }
+    if (updateBest()) save();   // 0.4.1 (M1): 念のため開始前にも退避
     mission = { mode: mode, items: items, idx: 0, results: [], startAt: performance.now(), hidden: 0, day: today(), timeUp: false,
-      newMastered: 0, comeback: false, rankBeforeMin: rankInfo(masteredCount()).min };
+      newMastered: 0, comeback: false, rechecks: 0, rankBeforeMin: rankInfo(rankCount()).min };
     showScreen('quiz');
     renderQuestion();
   }
@@ -605,6 +632,26 @@
     qTimer = { start: performance.now(), hidden: 0, answered: false };
   }
 
+  /**
+   * 0.4: 同日再確認。印（point）のある問題を間違えたとき、空き枠（最大10問まで）があれば、
+   * 同じ point の別の問題を2問あと以降に1問だけ入れる。1ミッション最大 MAX_RECHECK 問。
+   */
+  function queueRecheck(q) {
+    if (!q.point || !mission) return null;
+    if (mission.rechecks >= MAX_RECHECK || mission.items.length >= MAX_Q) return null;
+    var used = {};
+    mission.items.forEach(function (it) { used[it.q.id] = true; });
+    var sibs = pool().filter(function (x) { return x.point === q.point && !used[x.id]; });
+    if (!sibs.length) return null;
+    sibs.sort(function (a, b) { return (a.form === q.form ? 1 : 0) - (b.form === q.form ? 1 : 0); });   // 違う形を優先
+    // 0.4.1 (H1): 間に2問を挟めるときだけ入れる。挟めなければ入れない（元の誤答は通常どおり翌日復習）
+    var pos = mission.idx + 3;
+    if (pos > mission.items.length) return null;
+    mission.items.splice(pos, 0, { q: sibs[0], kind: 'recheck' });
+    mission.rechecks++;
+    return sibs[0];
+  }
+
   function answer(chosen) {
     if (!mission || qTimer.answered) return;
     var ms = Math.max(0, performance.now() - qTimer.start - qTimer.hidden);
@@ -612,7 +659,8 @@
     var item = mission.items[mission.idx];
     var q = item.q;
     var correct = recordAnswer(item, chosen, ms, mission.mode);
-    mission.results.push({ q: q, chosen: chosen, correct: correct, ms: ms });
+    mission.results.push({ q: q, chosen: chosen, correct: correct, ms: ms, kind: item.kind });
+    var queued = (!correct && item.kind !== 'recheck') ? queueRecheck(q) : null;
 
     var buttons = $('choices').children;
     for (var i = 0; i < buttons.length; i++) {
@@ -634,6 +682,11 @@
     fr.className = 'feedback-result ' + (correct ? 'ok' : 'ng');
     $('feedbackAnswer').textContent = '正解：' + q.choices[q.answer];
     $('feedbackExplanation').textContent = q.explanation;
+    // 0.4: 回答後にだけ、正確な日本語訳を表示する
+    $('feedbackJa').textContent = q.ja ? '訳：' + q.ja : '';
+    $('feedbackJa').hidden = !q.ja;
+    $('feedbackRecheck').hidden = !queued;
+    $('feedbackRecheck').textContent = queued ? 'このあと、同じ言葉を別の形でもう一度確認します。' : '';
     $('feedback').hidden = false;
 
     var timeUp = missionElapsed() >= TIME_LIMIT_MS;
@@ -698,13 +751,14 @@
     var c = m.results.filter(function (r) { return r.correct; }).length;
     $('resultScore').textContent = c + ' / ' + n;
     var comment = commentFor(c, n);
+    if (m.results.some(function (r) { return r.kind === 'recheck'; })) comment += '（「もう一度確認」の問題を含む）';
     if (m.timeUp) comment = '10分たったので今日はここまで。' + comment;
     $('resultComment').textContent = comment;
 
     // 0.3: 成長と実績
     var gbox = $('resultGrowth');
     gbox.innerHTML = '';
-    var mc = masteredCount(), total = pool().length, rk = rankInfo(mc);
+    var mc = masteredCount(), total = pool().length, rk = rankInfo(rankCount());
     if (rk.min > m.rankBeforeMin) {   // 0.3.1 (H1): 上がったときだけ通知（下がったときは出さない）
       gbox.appendChild(el('div', 'unlock', 'ランクアップ！ 「' + rk.name + '」になった'));
     }
@@ -718,7 +772,7 @@
     gp.appendChild(el('div', 'growth-line', '習得 ' + mc + ' / ' + total + ' 問' + (m.newMastered ? '（今回 +' + m.newMastered + '）' : '')));
     gp.appendChild(bar(total ? mc / total * 100 : 0));
     gp.appendChild(el('div', 'growth-note', rk.next
-      ? '次のランク「' + rk.next.name + '」まで あと' + (rk.next.need - mc) + '問'
+      ? '次のランク「' + rk.next.name + '」まで、今の習得数から あと' + Math.max(0, rk.next.need - mc) + '問'
       : '最高ランク到達！'));
     gbox.appendChild(gp);
 
@@ -734,6 +788,7 @@
       var detail = el('div', 'wd');
       detail.appendChild(el('div', '', 'あなたの答え：' + r.q.choices[r.chosen]));
       detail.appendChild(el('div', '', '正解：' + r.q.choices[r.q.answer]));
+      if (r.q.ja) detail.appendChild(el('div', '', '訳：' + r.q.ja));
       detail.appendChild(el('div', '', r.q.explanation));
       detail.hidden = true;
       b.appendChild(detail);
@@ -773,6 +828,7 @@
     var order = [];
     QUESTIONS.forEach(function (q) { if (!units[q.unit]) { units[q.unit] = { n: 0, c: 0 }; order.push(q.unit); } });
     data.log.forEach(function (r) {
+      if (r.mode === 'recheck') return;   // 0.4: 同日確認は単元別の成績に入れない
       var u = r.unit || (QMAP[r.id] && QMAP[r.id].unit) || '不明';
       if (!units[u]) { units[u] = { n: 0, c: 0 }; order.push(u); }
       units[u].n++; if (r.correct) units[u].c++;
@@ -828,7 +884,7 @@
     if (isNaN(d)) return iso;
     return localDay(d) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
   }
-  var MODE_LABEL = { review: '復習', 'new': '新規', extra: '追加セット', practice: '練習' };
+  var MODE_LABEL = { review: '復習', 'new': '新規', extra: '追加セット', practice: '練習', recheck: '同日確認' };
   function buildCsv() {
     var rows = [['日時', '学習日', '問題ID', '単元', '正誤', '回答時間(秒)', '選んだ答え', '正解', '種類']];
     data.log.forEach(function (r) {
@@ -882,6 +938,7 @@
       if (!confirm('バックアップ（学習履歴 ' + v.data.log.length + '件）で現在の記録（' + data.log.length + '件）を上書きします。よろしいですか？')) return;
       safeSet('sa_pre_import_' + Date.now(), JSON.stringify(data));   // 念のため上書き前を退避
       data = v.data;
+      updateBest();   // 0.4.1 (M1)
       save();
       toast('バックアップを読み込みました');
       renderParent();
@@ -950,7 +1007,7 @@
     get data() { return data; }, get mission() { return mission; }, get questions() { return QUESTIONS; },
     buildMission: buildMission, recordAnswer: recordAnswer, today: today, addDays: addDays,
     validateData: validateData, importBackupText: importBackupText, buildCsv: buildCsv,
-    rankInfo: rankInfo, masteredCount: masteredCount, weekStart: weekStart, weekStats: weekStats,
+    rankInfo: rankInfo, masteredCount: masteredCount, weekStart: weekStart, weekStats: weekStats, rankCount: rankCount,
     _setMissionStart: function (msAgo) { if (mission) mission.startAt = performance.now() - msAgo; },
     _setQuestionStart: function (msAgo) { qTimer.start = performance.now() - msAgo; },
     _onHide: onHide, _onShow: onShow

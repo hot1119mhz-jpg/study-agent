@@ -5,7 +5,7 @@
  * ファイル構成を変えたときは CACHE のバージョンを上げる。
  */
 var CACHE_PREFIX = 'study-agent-' + encodeURIComponent(self.registration.scope) + '-';
-var CACHE = CACHE_PREFIX + 'v0.3.2';
+var CACHE = CACHE_PREFIX + 'v0.4.1';
 var ASSETS = [
   './',
   './index.html',

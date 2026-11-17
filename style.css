@@ -179,6 +179,10 @@ body {
 }
 input, textarea { -webkit-user-select: text; user-select: text; }
 
+/* Ver.0.4: 回答後の日本語訳・同日再確認の案内 */
+.feedback-ja { margin: 8px 0 0; font-size: 16px; color: var(--muted); white-space: pre-line; }
+.feedback-recheck { margin-top: 8px; font-size: 16px; color: var(--cyan); }
+
 /* Ver.0.3: 回答後の表示（文字ラベル付き） */
 .choice { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .choice.is-correct { border-width: 2px; }
