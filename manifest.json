@@ -1,7 +1,7 @@
 {
   "name": "STUDY AGENT",
   "short_name": "STUDY AGENT",
-  "description": "毎日10分の英語ミッション",
+  "description": "毎日10分の英語・国語・社会ミッション",
   "lang": "ja",
   "start_url": "./",
   "scope": "./",
