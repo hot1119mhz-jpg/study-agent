@@ -5,7 +5,7 @@
   // ---------------------------------------------------------------------------
   // Constants
   // ---------------------------------------------------------------------------
-  var APP_VERSION = '0.4.3';
+  var APP_VERSION = '0.4.4';
   var MASTER_BOX = 2;                   // 箱2以上＝日をあけて2回続けて正解＝「習得」
   var MAX_RECHECK = 2;                  // 0.4: 同日再確認は1ミッション最大2問（空き枠があるときだけ）
   var EXTRA_NEW_PER_DAY = 5;            // 追加セットで先取りできる新規問題の数
@@ -252,6 +252,7 @@
    */
   function buildMission(mode) {
     var day = today();
+    if (mode === 'one') return buildOne(day);
     var items = [];
     var used = {};
     function push(q, kind) { if (items.length < MAX_Q && !used[q.id]) { used[q.id] = true; items.push({ q: q, kind: kind }); } }
@@ -268,6 +269,30 @@
         .forEach(function (q) { push(q, 'practice'); });
     }
     return items;
+  }
+
+  /**
+   * 0.4.4: 「1問だけ」。次の順で最初に見つかった1問だけを出す（同じ順位の中は dueList と同じ期限の古い順）。
+   *   1. 期限が来た復習で、前回不正解
+   *   2. 期限が来た復習で、前回正解
+   *   3. 新しい問題（1日の新規枠の範囲内）
+   *   4. 期限前で前回正解の問題を「練習」として（箱・次回日は動かさない）
+   */
+  function buildOne(day) {
+    var due = dueList(day);
+    function lastOk(q) { return data.progress[q.id].lastCorrect === true; }
+    var pick = due.filter(function (q) { return !lastOk(q); })[0];
+    if (pick) return [{ q: pick, kind: 'review' }];
+    pick = due.filter(lastOk)[0];
+    if (pick) return [{ q: pick, kind: 'review' }];
+    if (newLeftToday(day) > 0) {
+      pick = unseenList()[0];
+      if (pick) return [{ q: pick, kind: 'new' }];
+    }
+    pick = pool().filter(function (q) { var p = data.progress[q.id]; return p && p.lastCorrect === true && p.due > day; })
+      .sort(function (a, b) { var pa = data.progress[a.id], pb = data.progress[b.id]; return pa.due < pb.due ? -1 : pa.due > pb.due ? 1 : 0; })[0];
+    if (pick) return [{ q: pick, kind: 'practice' }];
+    return [];
   }
 
   /** 1問の回答を記録し、ライトナーの箱と次回出題日を更新する */
@@ -311,7 +336,8 @@
     updateBest();
     d.answered++;
     data.log.push({ ts: new Date().toISOString(), day: day, id: q.id, unit: q.unit, correct: correct,
-      ms: Math.round(ms), chosen: chosen, mode: item.kind === 'practice' ? 'practice' : mode === 'extra' ? 'extra' : item.kind });
+      ms: Math.round(ms), chosen: chosen,
+      mode: mode === 'one' ? 'one' : item.kind === 'practice' ? 'practice' : mode === 'extra' ? 'extra' : item.kind });
     save();
     return correct;
   }
@@ -477,6 +503,16 @@
       return;
     }
 
+    // 0.4.4: 「1問だけ」をいちばん上に置く（出せる問題があるときだけ）
+    if (buildMission('one').length) {
+      var b1 = el('button', 'btn btn-primary', '1問だけ');
+      b1.type = 'button';
+      b1.id = 'btnOne';
+      b1.addEventListener('click', function () { startMission('one'); });
+      main.appendChild(b1);
+      main.appendChild(el('p', 'status-msg', '1問で終わってOK。'));
+    }
+
     if (isTodayDone()) {
       main.appendChild(el('p', 'status-done', '本日のミッション完了'));
       main.appendChild(el('p', 'status-msg', 'おつかれさま。続きはまた明日。'));
@@ -496,8 +532,9 @@
       main.appendChild(el('p', 'status-msg', '今日出題する問題はありません。'));
       return;
     }
-    var b = el('button', 'btn btn-primary', '今日のミッション開始（' + items.length + '問）');
+    var b = el('button', 'btn', '今日のミッション開始（' + items.length + '問）');
     b.type = 'button';
+    b.id = 'btnMission';
     b.addEventListener('click', function () { startMission('normal'); });
     main.appendChild(b);
     main.appendChild(el('p', 'status-msg', '目安は10分。時間になったら、その問題で終わります。'));
@@ -637,7 +674,7 @@
    * 同じ point の別の問題を2問あと以降に1問だけ入れる。1ミッション最大 MAX_RECHECK 問。
    */
   function queueRecheck(q) {
-    if (!q.point || !mission) return null;
+    if (!q.point || !mission || mission.mode === 'one') return null;   // 0.4.4: 1問モードでは入れない
     if (mission.rechecks >= MAX_RECHECK || mission.items.length >= MAX_Q) return null;
     var used = {};
     mission.items.forEach(function (it) { used[it.q.id] = true; });
@@ -695,7 +732,7 @@
       $('feedbackTime').hidden = false;
     }
     var last = timeUp || mission.idx + 1 >= mission.items.length;
-    $('btnNext').textContent = last ? '結果を見る' : '次の問題へ';
+    $('btnNext').textContent = mission.mode === 'one' ? '完了' : last ? '結果を見る' : '次の問題へ';
     $('btnNext').hidden = false;
     $('progressBar').style.width = ((mission.idx + 1) / mission.items.length * 100) + '%';
     // 0.2.2: 小さい画面や長い解説でも「次へ」が画面外に隠れないようにする
@@ -750,9 +787,13 @@
     var n = m.results.length;
     var c = m.results.filter(function (r) { return r.correct; }).length;
     $('resultScore').textContent = c + ' / ' + n;
+    // 0.4.4: 1問モードでは点数を出さない（結果画面は使い回すので、他のモードでは毎回表示に戻す）
+    $('resultScore').hidden = m.mode === 'one';
+    $('resultScoreLabel').hidden = m.mode === 'one';
     var comment = commentFor(c, n);
     if (m.results.some(function (r) { return r.kind === 'recheck'; })) comment += '（「もう一度確認」の問題を含む）';
     if (m.timeUp) comment = '10分たったので今日はここまで。' + comment;
+    if (m.mode === 'one') comment = '1問クリア。今日はここまででOK。';   // 0.4.4: 点数より「終えたこと」を伝える
     $('resultComment').textContent = comment;
 
     // 0.3: 成長と実績
@@ -884,7 +925,7 @@
     if (isNaN(d)) return iso;
     return localDay(d) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
   }
-  var MODE_LABEL = { review: '復習', 'new': '新規', extra: '追加セット', practice: '練習', recheck: '同日確認' };
+  var MODE_LABEL = { review: '復習', 'new': '新規', extra: '追加セット', practice: '練習', recheck: '同日確認', one: '1問' };
   function buildCsv() {
     var rows = [['日時', '学習日', '問題ID', '単元', '正誤', '回答時間(秒)', '選んだ答え', '正解', '種類']];
     data.log.forEach(function (r) {
